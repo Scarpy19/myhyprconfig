@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Go from current active window to its child shell process and print its cwd.
+# If the active window belongs to zed-editor, ignore it and try to pick another
+# client (prefer terminal emulators) to determine the cwd.
+#
+# Improvements:
+# - Cleaner parent-walk (no stray awk)
+# - More robust parsing of hyprctl output
+# - Clean fallback logic
+#
+# Relies on: hyprctl, /proc, pgrep, readlink
+
+set -uo pipefail
+
+TERMINALS=(alacritty kitty foot wezterm gnome-terminal- gnome-terminal xterm st urxvt konsole xfce4-terminal termite tilix rxvt hyper)
+SHELLS=(bash zsh fish sh)
+
+# Read the process basename for a PID (lowercased), or empty on failure.
+proc_basename() {
+  local pid="$1"
+  local name=""
+  if [[ -r "/proc/$pid/comm" ]]; then
+    name=$(tr -d '\n' < "/proc/$pid/comm" 2>/dev/null || true)
+  fi
+  if [[ -z "$name" && -r "/proc/$pid/exe" ]]; then
+    local exe
+    exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)
+    name=$(basename "$exe" 2>/dev/null || true)
+  fi
+  # normalize to lowercase
+  printf '%s' "${name,,}"
+}
+
+# Return 0 if PID looks like zed editor
+is_zed() {
+  local pid="$1"
+  local name
+  name=$(proc_basename "$pid")
+  [[ -z "$name" ]] && return 1
+  case "$name" in
+    zed|zed-editor|zed-editor-bin|zed-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Return 0 if PID looks like a preferred terminal emulator
+is_terminal() {
+  local pid="$1"
+  local name
+  name=$(proc_basename "$pid")
+  [[ -z "$name" ]] && return 1
+  local t
+  for t in "${TERMINALS[@]}"; do
+    if [[ "$name" == "$t" || "$name" == "$t"* || "$name" == *"$t" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Parse hyprctl activewindow output for pid without using awk
+get_active_window_pid() {
+  local line pid
+  while IFS= read -r line; do
+    # lines are like:  pid: 1234
+    if [[ $line == *"pid:"* ]]; then
+      # squeeze spaces then cut field 2
+      pid=$(printf '%s' "$line" | tr -s ' ' | cut -d' ' -f2)
+      printf '%s' "$pid"
+      return 0
+    fi
+  done < <(hyprctl activewindow 2>/dev/null || true)
+  return 1
+}
+
+# Get all client pids from hyprctl clients output
+get_all_client_pids() {
+  local line pid
+  while IFS= read -r line; do
+    if [[ $line == *"pid:"* ]]; then
+      pid=$(printf '%s' "$line" | tr -s ' ' | cut -d' ' -f2)
+      if [[ -n "$pid" ]]; then
+        printf '%s\n' "$pid"
+      fi
+    fi
+  done < <(hyprctl clients 2>/dev/null || true)
+}
+
+# Return 0 if 'ancestor' is an ancestor of 'pid' (walk PPid chain)
+is_ancestor() {
+  local pid="$1"
+  local ancestor="$2"
+  if [[ -z "$pid" || -z "$ancestor" ]]; then
+    return 1
+  fi
+  local current="$pid"
+  while true; do
+    if [[ ! -r "/proc/$current/status" ]]; then
+      return 1
+    fi
+    local ppid
+    ppid=$(awk '/^PPid:/ {print $2}' "/proc/$current/status" 2>/dev/null || true)
+    if [[ -z "$ppid" || "$ppid" == "0" || "$ppid" == "1" ]]; then
+      return 1
+    fi
+    if [[ "$ppid" == "$ancestor" ]]; then
+      return 0
+    fi
+    # move up one level
+    current="$ppid"
+  done
+}
+
+# Print cwd for a client PID by finding its child shell or using client's cwd
+print_cwd_for_client() {
+  local client_pid="$1"
+  if [[ -z "$client_pid" ]]; then
+    printf '%s\n' "$HOME"
+    return
+  fi
+
+  # Try immediate child
+  local shell_pid
+  shell_pid=$(pgrep -P "$client_pid" 2>/dev/null || true)
+  if [[ -n "$shell_pid" ]]; then
+    shell_pid=$(printf '%s' "$shell_pid" | head -n1)
+  fi
+
+  # If none, try to find a shell process whose ancestor is client
+  if [[ -z "$shell_pid" ]]; then
+    local shn pidlist pid
+    for shn in "${SHELLS[@]}"; do
+      # list shells for current user
+      pidlist=$(pgrep -u "$(id -u)" -x "$shn" 2>/dev/null || true)
+      if [[ -z "$pidlist" ]]; then
+        continue
+      fi
+      while IFS= read -r pid; do
+        if [[ -z "$pid" ]]; then
+          continue
+        fi
+        if is_ancestor "$pid" "$client_pid"; then
+          shell_pid="$pid"
+          break 2
+        fi
+      done <<< "$pidlist"
+    done
+  fi
+
+  # As last resort, use client's own cwd
+  if [[ -n "$shell_pid" ]]; then
+    readlink -f "/proc/$shell_pid/cwd" 2>/dev/null || printf '%s\n' "$HOME"
+  else
+    readlink -f "/proc/$client_pid/cwd" 2>/dev/null || printf '%s\n' "$HOME"
+  fi
+}
+
+main() {
+  local active_pid
+  active_pid=$(get_active_window_pid) || active_pid=""
+
+  if [[ -z "$active_pid" ]]; then
+    printf '%s\n' "$HOME"
+    return
+  fi
+
+  local client_pid="$active_pid"
+
+  if is_zed "$active_pid"; then
+    # Prefer a terminal client; otherwise pick the first non-zed client.
+    local chosen=""
+    local pid
+    while IFS= read -r pid; do
+      [[ -z "$pid" || "$pid" == "$active_pid" ]] && continue
+      if is_zed "$pid"; then
+        continue
+      fi
+      if is_terminal "$pid"; then
+        chosen="$pid"
+        break
+      fi
+      if [[ -z "$chosen" ]]; then
+        chosen="$pid"
+      fi
+    done < <(get_all_client_pids)
+
+    if [[ -n "$chosen" ]]; then
+      client_pid="$chosen"
+    else
+      # No other suitable client found -> fall back to active (zed)
+      client_pid="$active_pid"
+    fi
+  fi
+
+  print_cwd_for_client "$client_pid"
+}
+
+main
