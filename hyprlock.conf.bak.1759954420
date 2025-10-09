@@ -25,7 +25,7 @@ animations {
 #BACKGROUND
 background {
     monitor =
-    color = $color
+#    path = ~/wallpaper.png
     path = screenshot
     blur_passes = 2
     contrast = 0.8916
@@ -60,10 +60,6 @@ label {
     position = 0, -270
     halign = center
     valign = top
-}
-
-animations {
-    enabled = false
 }
 
 # INPUT FIELD
