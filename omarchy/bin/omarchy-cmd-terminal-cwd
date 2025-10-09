@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 # Go from current active window to its child shell process and print its cwd.
-# If the active window belongs to zed-editor, ignore it and try to pick another
-# client (prefer terminal emulators) to determine the cwd.
-#
-# Improvements:
-# - Cleaner parent-walk (no stray awk)
-# - More robust parsing of hyprctl output
-# - Clean fallback logic
+# If the active window belongs to zed-editor or discord, ignore it and return $HOME.
 #
 # Relies on: hyprctl, /proc, pgrep, readlink
 
@@ -39,6 +33,22 @@ is_zed() {
   [[ -z "$name" ]] && return 1
   case "$name" in
     zed|zed-editor|zed-editor-bin|zed-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Return 0 if PID looks like discord
+is_discord() {
+  local pid="$1"
+  local name
+  name=$(proc_basename "$pid")
+  [[ -z "$name" ]] && return 1
+  case "$name" in
+    discord|discord-desktop|discord_bin|discord-bin|discord-*)
       return 0
       ;;
     *)
@@ -168,33 +178,14 @@ main() {
     return
   fi
 
-  local client_pid="$active_pid"
-
-  if is_zed "$active_pid"; then
-    # Prefer a terminal client; otherwise pick the first non-zed client.
-    local chosen=""
-    local pid
-    while IFS= read -r pid; do
-      [[ -z "$pid" || "$pid" == "$active_pid" ]] && continue
-      if is_zed "$pid"; then
-        continue
-      fi
-      if is_terminal "$pid"; then
-        chosen="$pid"
-        break
-      fi
-      if [[ -z "$chosen" ]]; then
-        chosen="$pid"
-      fi
-    done < <(get_all_client_pids)
-
-    if [[ -n "$chosen" ]]; then
-      client_pid="$chosen"
-    else
-      # No other suitable client found -> fall back to active (zed)
-      client_pid="$active_pid"
-    fi
+  # If active window is Zed or Discord, ignore it and return HOME (do not search other clients)
+  if is_zed "$active_pid" || is_discord "$active_pid"; then
+    printf '%s\n' "$HOME"
+    return
   fi
+
+  # Otherwise use the active client PID as before
+  local client_pid="$active_pid"
 
   print_cwd_for_client "$client_pid"
 }
