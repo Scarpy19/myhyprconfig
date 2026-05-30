@@ -1,2 +1,0 @@
-Temas en /usr/share/plymouth
-Archivo de configuración en /etc/plymouth/plymouthd.conf
