@@ -1,5 +1,9 @@
 -- DEFAULTS UTILITIES
 
+hl.bind("SUPER + SHIFT + ALT + CTRL + R",
+    hl.dsp.exec_cmd("pkill -x waybar | setsid uwsm-app -- waybar >/dev/null 2>&1 &"),
+    { description = "Reload Waybar" })
+
 -- o.bind("SUPER + SPACE", "Launch apps", { omarchy = "walker" })
 hl.unbind("SUPER + CTRL + E")
 o.bind("SUPER + PERIOD", "Emoji picker", { omarchy = "walker -m symbols" })
