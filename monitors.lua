@@ -19,7 +19,7 @@ local omarchy_monitor_scale = 1
 hl.env("GDK_SCALE", tostring(omarchy_gdk_scale))
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = omarchy_monitor_scale })
 hl.monitor({ output = "DP-1", mode = "1920x1080@99.67Hz", position = "0x0", scale = omarchy_monitor_scale })
-hl.monitor({ output = "HDMI-A-1", mode = "1680x1050@59.95Hz", position = "-1680x0", scale = omarchy_monitor_scale })
+hl.monitor({ output = "HDMI-A-1", mode = "1920x1080@75.00Hz", position = "-1920x0", scale = omarchy_monitor_scale })
 
 -- Portrait/rotated secondary monitor (transform: 1 = 90°, 3 = 270°)
 -- hl.monitor({ output = "DP-2", mode = "preferred", position = "auto", scale = 1, transform = 1 })
